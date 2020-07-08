@@ -1,7 +1,11 @@
 arcgis>=1.8.1
 dask>=2.20.0
+html2text
+numpy
+pandas
 python-dotenv>=0.14.0
 requests>=2.24.0
+scipy
 shapely>=1.7.0
 swifter>=0.305
 tqdm>=4.47.0
