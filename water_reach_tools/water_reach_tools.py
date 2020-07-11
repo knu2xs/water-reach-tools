@@ -25,7 +25,7 @@ from uuid import uuid4
 from arcgis.env import active_gis
 from arcgis.gis import GIS, Item
 from arcgis.features import Feature, FeatureLayer, hydrology
-from arcgis.geometry import Polygon
+from arcgis.geometry import Polygon, Polyline, Geometry
 from html2text import html2text
 import numpy as np
 import pandas as pd
@@ -516,6 +516,22 @@ class Reach(object):
             self.abstract = self.abstract.replace('\\', '').replace('/n', '')[:500]
             self.abstract = self.abstract[:self.abstract.rfind(' ')]
             self.abstract = self.abstract + '...'
+
+    @property
+    def putin_x(self):
+        return self.putin.geometry.x
+
+    @property
+    def putin_y(self):
+        return self.putin.geometry.y
+
+    @property
+    def takeout_x(self):
+        return self.takeout.geometry.x
+
+    @property
+    def takeout_y(self):
+        return self.takeout.geometry.y
 
     @property
     def difficulty_filter(self):
@@ -1226,6 +1242,7 @@ class Reach(object):
                             trace_status = False
 
                         else:
+                            self._geometry = trace_polyline.trim_at_point(self.takeout.geometry)
                             trace_status = True
                             self.tracing_method = 'EPA WATERS NHD Plus v2'
                             break
@@ -1734,3 +1751,15 @@ class ReachFeatureLayer(_ReachIdFeatureLayer):
         else:
 
             return False
+
+
+def update_stage(reach_id, line_lyr_id=os.getenv('REACH_LINE_ID'), centroid_lyr_id=os.getenv('REACH_CENTROID_ID')):
+    """
+    Update the reach stage by the id.
+    :param reach_id: Reach ID uniquely identifying the reach
+    :return: Boolean success or failure.
+    """
+    reach = Reach.get_from_aw(reach_id)
+    for lyr_id in [line_lyr_id, centroid_lyr_id]:
+        lyr = ReachFeatureLayer.from_item_id(lyr_id)
+        lyr.update_reach_attributes_only(reach)
