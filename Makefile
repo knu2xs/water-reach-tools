@@ -83,3 +83,11 @@ dist: clean ## builds source and wheel package
 
 install: clean ## install the package to the active Python's site-packages
 	python setup.py install
+
+env:
+	python3 -m venv venv
+	. venv/bin/activate
+	pip install -r requirements_dev.txt
+	pip install -r requirements.txt
+	jupyter labextension install @jupyter-widgets/jupyterlab-manager
+	jupyter labextension install arcgis-map-ipywidget@1.8.1
