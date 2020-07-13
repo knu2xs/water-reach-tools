@@ -91,3 +91,15 @@ env:
 	pip install -r requirements.txt
 	jupyter labextension install @jupyter-widgets/jupyterlab-manager
 	jupyter labextension install arcgis-map-ipywidget@1.8.1
+
+update_attributes:
+	. venv/bin/activate
+	python3 -m scripts/update_attributes.py
+
+update_features:
+	. venv/bin/activate
+	python3 -m scripts/update_features.py
+
+update_stages:
+	. venv/bin/activate
+	python3 -m scripts/update_stages.py

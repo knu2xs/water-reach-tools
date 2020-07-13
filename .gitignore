@@ -109,3 +109,6 @@ ENV/
 
 # dotenv
 .env
+
+# dask stuff
+**/dask-worker-space/*

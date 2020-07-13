@@ -41,7 +41,7 @@ def reach_points_lyr(gis):
 
 def test_parse_difficulty_string():
     difficulty = 'IV-V(V+)'
-    reach = Reach(reach_id)
+    reach = Reach(reach_id_lws)
     reach._parse_difficulty_string(difficulty)
     if reach.difficulty_minimum != 'IV':
         status = False
@@ -55,42 +55,54 @@ def test_parse_difficulty_string():
 
 
 # Lower White Salmon testing
-reach_id = 2156
-putin_x = -121.629656
-putin_y = 45.764117
-takeout_x = -121.646106
-takeout_y = 45.718817
+reach_id_lws = 2156
+putin_x_lws = -121.629656
+putin_y_lws = 45.764117
+takeout_x_lws = -121.646106
+takeout_y_lws = 45.718817
 
 
 def test_reach_init():
-    reach = Reach(reach_id)
-    assert str(reach_id) == reach.reach_id
+    reach = Reach(reach_id_lws)
+    assert str(reach_id_lws) == reach.reach_id
 
 
 def test_download_raw_json_from_aw():
-    reach = Reach(reach_id)
+    reach = Reach(reach_id_lws)
     raw_json = reach._download_raw_json_from_aw()
     assert 'CContainerViewJSON_view' in raw_json
 
 
 def test_get_from_aw():
-    reach = Reach.get_from_aw(reach_id)
+    reach = Reach.get_from_aw(reach_id_lws)
     assert reach.river_name == 'Little White Salmon'
 
 
 def test_putin():
-    reach = Reach.get_from_aw(reach_id)
+    reach = Reach.get_from_aw(reach_id_lws)
     putin = reach.putin
-    assert (putin_x, putin_y) == (putin.geometry.x, putin.geometry.y)
+    assert (putin_x_lws, putin_y_lws) == (putin.geometry.x, putin.geometry.y)
 
 
 def test_takeout():
-    reach = Reach.get_from_aw(reach_id)
+    reach = Reach.get_from_aw(reach_id_lws)
     takeout = reach.takeout
-    assert (takeout_x, takeout_y) == (takeout.geometry.x, takeout.geometry.y)
+    assert (takeout_x_lws, takeout_y_lws) == (takeout.geometry.x, takeout.geometry.y)
 
 
 def test_trace_result():
-    reach = Reach.get_from_aw(reach_id)
+    reach = Reach.get_from_aw(reach_id_lws)
     reach.snap_putin_and_takeout_and_trace()
     assert isinstance(reach.geometry, Polyline)
+
+
+# Guage testing on French Broad Section Nine
+reach_id_fb9 = 1074
+
+
+def test_get_ranges():
+    reach = Reach.get_from_aw(reach_id_fb9)
+    assert reach.gauge_runnable is not None
+
+def test_update_stage(reach_point_lyr):
+    pass

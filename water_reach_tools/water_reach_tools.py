@@ -19,6 +19,7 @@ import datetime
 from html.parser import HTMLParser
 import inspect
 import json
+import os
 import re
 from uuid import uuid4
 
@@ -293,6 +294,7 @@ class Reach(object):
 
         self._geometry = None
         self._reach_points = []
+        self._gague_dhid = None
 
         self.abstract = ''
         self.agency = None
@@ -328,6 +330,7 @@ class Reach(object):
         self.update_arcgis = None           # datetime
         self.validated = None               # boolean
         self.validated_by = ''
+        self._zoom_envelope = None           # Polygon Geometry
 
     def _download_raw_json_from_aw(self):
         url = 'https://www.americanwhitewater.org/content/River/detail/id/{}/.json'.format(self.reach_id)
@@ -424,7 +427,7 @@ class Reach(object):
         # finally call it good
         return cleanup
 
-    def _parse_json(self, raw_json):
+    def _parse_aw_json(self, raw_json):
 
         def remove_backslashes(input_str):
             if isinstance(input_str, str) and len(input_str):
@@ -455,19 +458,31 @@ class Reach(object):
             if metric in gauge_info.keys() and gauge_info[metric] is not None:
                 return float(gauge_info[metric])
 
-        # get the gauge information
+        # get the gauge information if there is a gauge
         if len(self._reach_json['gauges']):
-            gauge_info = self._reach_json['gauges'][0]
-            self.gauge_observation = get_gauge_metric(gauge_info, 'gauge_reading')
-            self.gauge_id = gauge_info['gauge_id']
-            self.gauge_units = gauge_info['metric_unit']
-            self.gauge_metric = gauge_info['gauge_metric']
 
+            # save the first gauge to work work since typically there is only one
+            self._gauge_info = self._reach_json['gauges'][0]
+
+            # if there are multiple, bias toward cfs if available
+            for gauge in self._reach_json['gauges']:
+
+                if gauge['metric_unit'] == 'cfs':
+                    self._gauge_info = gauge
+                    break
+
+            self.gauge_observation = get_gauge_metric(self._gauge_info, 'gauge_reading')
+            self.gauge_id = self._gauge_info['gauge_id']
+            self.gauge_units = self._gauge_info['metric_unit']
+            self.gauge_metric = self._gauge_info['gauge_metric']
+
+            # for all the gauge ranges correlating to the gauge we are working with, set the ranges
             for rng in self._reach_json['guagesummary']['ranges']:
-                if rng['range_min'] and rng['gauge_min']:
-                    setattr(self, f"gauge_{rng['range_min'].lower()}", float(rng['gauge_min']))
-                if rng['range_max'] and rng['gauge_max']:
-                    setattr(self, f"gauge_{rng['range_max'].lower()}", float(rng['gauge_max']))
+                if rng['dhid'] == self._gauge_info['dhid']:
+                    if rng['range_min'] and rng['gauge_min']:
+                        setattr(self, f"gauge_{rng['range_min'].lower()}", float(rng['gauge_min']))
+                    if rng['range_max'] and rng['gauge_max']:
+                        setattr(self, f"gauge_{rng['range_max'].lower()}", float(rng['gauge_max']))
 
         # save the update datetime as a true datetime object
         if reach_info['edited']:
@@ -516,6 +531,13 @@ class Reach(object):
             self.abstract = self.abstract.replace('\\', '').replace('/n', '')[:500]
             self.abstract = self.abstract[:self.abstract.rfind(' ')]
             self.abstract = self.abstract + '...'
+
+        # get the bounding box for the reach
+        if reach_info['bbox'] and reach_info['bbox'] is not None:
+            bbox = self._reach_json['info']['bbox']
+            envlp_coords = [[bbox[0], bbox[1]], [bbox[0], bbox[3]], [bbox[2], bbox[3]], [bbox[2], bbox[1]],
+                            [bbox[0], bbox[1]]]
+            self._zoom_envelope = Geometry({"rings": [envlp_coords], "spatialReference": {"wkid": 4326}})
 
     @property
     def putin_x(self):
@@ -844,194 +866,6 @@ class Reach(object):
             if metrics[8] < self.gauge_observation < metrics[9]:
                 return 'extremely high'
 
-    def _download_raw_json_from_aw(self):
-        url = 'https://www.americanwhitewater.org/content/River/detail/id/{}/.json'.format(self.reach_id)
-
-        attempts = 0
-        status_code = 0
-
-        while attempts < 10 and status_code != 200:
-            resp = requests.get(url)
-            if resp.status_code == 200 and len(resp.content):
-                return resp.json()
-            elif resp.status_code == 200 and not len(resp.content):
-                return False
-            elif resp.status_code == 500:
-                return False
-            else:
-                attempts = attempts + 1
-        raise Exception('cannot download data for reach_id {}'.format(self['reach_id']))
-
-    def _parse_difficulty_string(self, difficulty_combined):
-        match = re.match(
-            r'^([I|IV|V|VI|5\.\d]{1,3}(?=-))?-?([I|IV|V|VI|5\.\d]{1,3}[+|-]?)\(?([I|IV|V|VI|5\.\d]{0,3}[+|-]?)',
-            difficulty_combined
-        )
-        self.difficulty_minimum = self._get_if_length(match.group(1))
-        self.difficulty_maximum = self._get_if_length(match.group(2))
-        self.difficulty_outlier = self._get_if_length(match.group(3))
-
-    @staticmethod
-    def _get_if_length(match_string):
-        if match_string and len(match_string):
-            return match_string
-        else:
-            return None
-
-    def _validate_aw_json(self, json_block, key):
-
-        # check to ensure a value exists
-        if key not in json_block.keys():
-            return None
-
-        # ensure there is a value for the key
-        elif json_block[key] is None:
-            return None
-
-        else:
-
-            # clean up the text garbage...because there is a lot of it
-            value = self._cleanup_string(json_block[key])
-
-            # now, ensure something is still there...not kidding, this frequently is the case...it is all gone
-            if not value:
-                return None
-            elif not len(value):
-                return None
-
-            else:
-                # now check to ensure there is actually some text in the block, not just blank characters
-                if not (re.match(r'^([ \r\n\t])+$', value) or not (value != 'N/A')):
-
-                    # if everything is good, return a value
-                    return value
-
-                else:
-                    return None
-
-    @staticmethod
-    def _cleanup_string(input_string):
-
-        # ensure something to work with
-        if not input_string:
-            return input_string
-
-        # convert to markdown first, so any reasonable formatting is retained
-        cleanup = html2text(input_string)
-
-        # since people love to hit the space key multiple times in stupid places, get rid of multiple space, but leave
-        # newlines in there since they actually do contribute to formatting
-        cleanup = re.sub(r'\s{2,}', ' ', cleanup)
-
-        # apparently some people think it is a good idea to hit return more than twice...account for this foolishness
-        cleanup = re.sub(r'\n{3,}', '\n\n', cleanup)
-        cleanup = re.sub('(.)\n(.)', '\g<1> \g<2>', cleanup)
-
-        # get rid of any trailing newlines at end of entire text block
-        cleanup = re.sub(r'\n+$', '', cleanup)
-
-        # correct any leftover standalone links
-        cleanup = cleanup.replace('<', '[').replace('>', ']')
-
-        # get rid of any leading or trailing spaces
-        cleanup = cleanup.strip()
-
-        # finally call it good
-        return cleanup
-
-    def _parse_json(self, raw_json):
-
-        def remove_backslashes(input_str):
-            if isinstance(input_str, str) and len(input_str):
-                return input_str.replace('\\', '')
-            else:
-                return input_str
-
-        # pluck out the stuff we are interested in
-        self._reach_json = raw_json['CContainerViewJSON_view']['CRiverMainGadgetJSON_main']
-
-        # pull a bunch of attributes through validation and save as properties
-        reach_info = self._reach_json['info']
-        self.river_name = self._validate_aw_json(reach_info, 'river')
-
-        self.reach_name = remove_backslashes(self._validate_aw_json(reach_info, 'section'))
-        self.reach_alternate_name = remove_backslashes(self._validate_aw_json(reach_info, 'altname'))
-
-        self.huc = self._validate_aw_json(reach_info, 'huc')
-        self.description = self._validate_aw_json(reach_info, 'description')
-        self.abstract = self._validate_aw_json(reach_info, 'abstract')
-        self.agency = self._validate_aw_json(reach_info, 'agency')
-        length = self._validate_aw_json(reach_info, 'length')
-        if length:
-            self.length = float(length)
-
-        # helper to extract gauge information
-        def get_gauge_metric(gauge_info, metric):
-            if metric in gauge_info.keys() and gauge_info[metric] is not None:
-                return float(gauge_info[metric])
-
-        # get the gauge information
-        if len(self._reach_json['gauges']):
-            gauge_info = self._reach_json['gauges'][0]
-            self.gauge_observation = get_gauge_metric(gauge_info, 'gauge_reading')
-            self.gauge_id = gauge_info['gauge_id']
-            self.gauge_units = gauge_info['metric_unit']
-            self.gauge_metric = gauge_info['gauge_metric']
-
-            for rng in self._reach_json['guagesummary']['ranges']:
-                if rng['range_min'] and rng['gauge_min']:
-                    setattr(self, f"gauge_{rng['range_min'].lower()}", float(rng['gauge_min']))
-                if rng['range_max'] and rng['gauge_max']:
-                    setattr(self, f"gauge_{rng['range_max'].lower()}", float(rng['gauge_max']))
-
-        # save the update datetime as a true datetime object
-        if reach_info['edited']:
-            self.update_aw = datetime.datetime.strptime(reach_info['edited'], '%Y-%m-%d %H:%M:%S')
-
-        # process difficulty
-        if len(reach_info['class']) and reach_info['class'].lower() != 'none':
-            self.difficulty = self._validate_aw_json(reach_info, 'class')
-            self._parse_difficulty_string(str(self.difficulty))
-
-        # ensure putin coordinates are present, and if so, add the put-in point to the points list
-        if reach_info['plon'] is not None and reach_info['plat'] is not None:
-            self._reach_points.append(
-                ReachPoint(
-                    reach_id=self.reach_id,
-                    geometry=Point({
-                        'x': float(reach_info['plon']),
-                        'y': float(reach_info['plat']),
-                        'spatialReference': {'wkid': 4326}
-                    }),
-                    point_type='access',
-                    subtype='putin'
-                )
-            )
-
-        # ensure take-out coordinates are present, and if so, add take-out point to points list
-        if reach_info['tlon'] is not None and reach_info['tlat'] is not None:
-            self._reach_points.append(
-                ReachPoint(
-                    reach_id=self.reach_id,
-                    point_type='access',
-                    subtype='takeout',
-                    geometry=Point({
-                        'x': float(reach_info['tlon']),
-                        'y': float(reach_info['tlat']),
-                        'spatialReference': {'wkid': 4326}
-                    })
-                )
-            )
-
-        # if there is not an abstract, create one from the description
-        if (not self.abstract or len(self.abstract) == 0) and (self.description and len(self.description) > 0):
-
-            # reomve all line returns, html tags, trim to 500 characters, and trim to last space to ensure full word
-            self.abstract = self._cleanup_string(_strip_tags(reach_info['description']))
-            self.abstract = self.abstract.replace('\\', '').replace('/n', '')[:500]
-            self.abstract = self.abstract[:self.abstract.rfind(' ')]
-            self.abstract = self.abstract + '...'
-
     @classmethod
     def get_from_aw(cls, reach_id):
 
@@ -1046,7 +880,7 @@ class Reach(object):
             return False
 
         # parse data out of the AW JSON
-        reach._parse_json(raw_json)
+        reach._parse_aw_json(raw_json)
 
         # return the result
         return reach
@@ -1361,6 +1195,7 @@ class Reach(object):
             & (srs != 'intermediate_accesses')
             & (srs != 'geometry')
             & (srs != 'has_a_point')
+            & (srs != 'centroid')
             ]
         srs = srs[srs.apply(lambda p: not hasattr(getattr(self, p), '__call__'))]
         return {key: getattr(self, key) for key in srs}
@@ -1384,6 +1219,18 @@ class Reach(object):
         :return: Feature with point geometry for the reach centroid.
         """
         return Feature(geometry=self.centroid, attributes=self._get_feature_attributes())
+
+    @property
+    def as_zoom_envelope_feature(self):
+        """
+        Get a polygon geometry object with a generally accurate zoom envelope.
+        :return: Polygon feature complete with attributes.
+        """
+        if self._zoom_envelope:
+            feat = Feature(geometry=self._zoom_envelope, attributes=self._get_feature_attributes())
+        else:
+            feat = Feature(attributes=self._get_feature_attributes())
+        return feat
 
     def publish(self, reach_line_layer, reach_centroid_layer, reach_point_layer):
         """
@@ -1476,7 +1323,7 @@ class Reach(object):
         else:
             return False
 
-    def plot_map(self, gis=None):
+    def webmap(self, gis=None):
         """
         Display reach and accesses on web map widget.
         :param gis: ArcGIS Python API GIS object instance.
@@ -1544,16 +1391,8 @@ class Reach(object):
                 }
             )
 
-        mpbx_otdrs = 'mapbox_outdoors'
-        if mpbx_otdrs in webmap.gallery_basemaps:
-            webmap.basemap = mpbx_otdrs
-
-        def _fix_extent(wbmp):
-            wbmp.extent = wbmp.extent - 1
-
-        webmap.on_draw_end(_fix_extent, True)
-
         return webmap
+
 
 class _ReachIdFeatureLayer(FeatureLayer):
 
@@ -1584,6 +1423,95 @@ class _ReachIdFeatureLayer(FeatureLayer):
 
             # delete all the features using the OID string
             return self.edit_features(deletes=oid_deletes)
+
+    def update(self, reach):
+
+        # get oid of records matching reach_id
+        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
+
+        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
+        if len(oid_lst) > 0:
+
+            # check the geometry type of the target feature service - point or line
+            if self.properties.geometryType == 'esriGeometryPoint':
+                update_feat = reach.as_centroid_feature
+
+            elif self.properties.geometryType == 'esriGeometryPolyline':
+                update_feat = reach.as_feature
+
+            update_feat.attributes['OBJECTID'] = oid_lst[0]
+            resp = self.edit_features(updates=[update_feat])
+
+        # if the feature does not exist, add it
+        else:
+            resp = self.add_reach(reach)
+
+        return resp
+
+    def update_attributes_only(self, reach):
+
+        # get oid of records matching reach_id
+        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
+
+        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
+        if len(oid_lst) > 0:
+
+            # check the geometry type of the target feature service - point or line
+            if self.properties.geometryType == 'esriGeometryPoint':
+                update_feat = reach.as_centroid_feature
+
+            elif self.properties.geometryType == 'esriGeometryPolyline':
+                update_feat = reach.as_feature
+
+            # remove any of the geographic properties from the feature
+            for attr in ['extent']:
+                del (update_feat.attributes[attr])
+            update_feat = Feature(attributes=update_feat.attributes)  # gets rid of geometry
+
+            update_feat.attributes['OBJECTID'] = oid_lst[0]
+
+            # push the update
+            resp = self.edit_features(updates=[update_feat])
+
+            return resp
+
+        else:
+
+            return False
+
+    def update_stage(self, reach):
+
+        # get oid of records matching reach_id
+        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
+
+        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
+        if len(oid_lst) > 0:
+
+            # check the geometry type of the target feature service - point or line
+            if self.properties.geometryType == 'esriGeometryPoint':
+                update_feat = reach.as_centroid_feature
+
+            elif self.properties.geometryType == 'esriGeometryPolyline':
+                update_feat = reach.as_feature
+
+            # remove properties not needed, which is most of them
+            update_keys = ['gauge_runnable', 'gauge_stage', 'gauge_observation']
+            attrs = {k: update_feat.attributes[k] for k in update_feat.attributes.keys() if k in update_keys}
+
+            # create new feature without geometry and only needed attributes
+            update_feat = Feature(attributes=attrs)
+
+            # tack on the object id retrieved initally
+            update_feat.attributes['OBJECTID'] = oid_lst[0]
+
+            # push the update
+            resp = self.edit_features(updates=[update_feat])
+
+            return resp
+
+        else:
+
+            return False
 
 
 class ReachPointFeatureLayer(_ReachIdFeatureLayer):
@@ -1657,7 +1585,7 @@ class ReachPointFeatureLayer(_ReachIdFeatureLayer):
         return self._create_reach_point_from_series(takeout_series)
 
 
-class ReachFeatureLayer(_ReachIdFeatureLayer):
+class ReachLineFeatureLayer(_ReachIdFeatureLayer):
 
     def query_by_river_name(self, river_name_search):
         field_name = 'name_river'
@@ -1696,61 +1624,6 @@ class ReachFeatureLayer(_ReachIdFeatureLayer):
             raise Exception('The feature service geometry type must be either point or polyline.')
 
         return resp
-
-    def update_reach(self, reach):
-
-        # get oid of records matching reach_id
-        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
-
-        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
-        if len(oid_lst) > 0:
-
-            # check the geometry type of the target feature service - point or line
-            if self.properties.geometryType == 'esriGeometryPoint':
-                update_feat = reach.as_centroid_feature
-
-            elif self.properties.geometryType == 'esriGeometryPolyline':
-                update_feat = reach.as_feature
-
-            update_feat.attributes['OBJECTID'] = oid_lst[0]
-            resp = self.edit_features(updates=[update_feat])
-
-        # if the feature does not exist, add it
-        else:
-            resp = self.add_reach(reach)
-
-        return resp
-
-    def update_reach_attributes_only(self, reach):
-
-        # get oid of records matching reach_id
-        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
-
-        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
-        if len(oid_lst) > 0:
-
-            # check the geometry type of the target feature service - point or line
-            if self.properties.geometryType == 'esriGeometryPoint':
-                update_feat = reach.as_centroid_feature
-
-            elif self.properties.geometryType == 'esriGeometryPolyline':
-                update_feat = reach.as_feature
-
-            # remove any of the geographic properties from the feature
-            for attr in ['putin_x', 'putin_y', 'takeout_x', 'takeout_y', 'extent', 'centroid']:
-                del (update_feat.attributes[attr])
-            update_feat = Feature(attributes=update_feat.attributes)  # gets rid of geometry
-
-            update_feat.attributes['OBJECTID'] = oid_lst[0]
-
-            # push the update
-            resp = self.edit_features(updates=[update_feat])
-
-            return resp
-
-        else:
-
-            return False
 
 
 def update_stage(reach_id, line_lyr_id=os.getenv('REACH_LINE_ID'), centroid_lyr_id=os.getenv('REACH_CENTROID_ID')):
