@@ -1,0 +1,19 @@
+name: water-reach-tools
+
+channels:
+  - esri
+  - conda-forge
+
+dependencies:
+  - esri::arcgis
+  - cookiecutter
+  - jupyterlab
+  - nodejs
+  - pip
+  - pyarrow
+  - python=3.7
+  - python-dotenv
+  - shapely
+  - pip:
+    - azure-storage-blob
+    - boto3

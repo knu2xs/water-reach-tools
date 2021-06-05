@@ -1,0 +1,33 @@
+name: water-reach-tools
+
+channels:
+  - esri
+  - conda-forge
+
+dependencies:
+  - esri::arcgis
+  - cookiecutter
+  - dask
+  - fiona
+  - h3-py
+  - jupyterlab
+  - nodejs
+  - pip
+  - esri::pyarrow
+  - pytest
+  - python=3.7
+  - python-dotenv
+  - pyyaml
+  - seaborn
+  - shapely
+  - swifter
+  - pip:
+    - azure-storage-blob
+    - boto3
+    - bump2version
+    - ipykernel
+    - placekey
+    - sphinx
+    - sphinx-autodoc-typehints
+    - sphinx_rtd_theme
+    - twine
