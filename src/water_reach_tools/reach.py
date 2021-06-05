@@ -330,7 +330,7 @@ class Reach(object):
         self.update_arcgis = None           # datetime
         self.validated = None               # boolean
         self.validated_by = ''
-        self._zoom_envelope = None           # Polygon Geometry
+        self._zoom_envelope = None          # Polygon Geometry
 
     def _download_raw_json_from_aw(self):
         url = 'https://www.americanwhitewater.org/content/River/detail/id/{}/.json'.format(self.reach_id)
