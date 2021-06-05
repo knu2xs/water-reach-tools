@@ -2,7 +2,7 @@
 
 __author__ = """Joel McCune"""
 __email__ = 'knu2xs@gmail.com'
-__version__ = '0.1.0-dev0'
+__version__ = '0.2.0-dev0'
 
 from .epa_waters import WATERS
 from .water_reach_tools import Reach
