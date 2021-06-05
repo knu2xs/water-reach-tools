@@ -8,6 +8,8 @@ dependencies:
   - esri::arcgis
   - dask
   - nodejs
+  - numpy
+  - pandas
   - pip
   - pyarrow
   - python=3.7

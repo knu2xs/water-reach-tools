@@ -10,6 +10,8 @@ dependencies:
   - dask
   - jupyterlab
   - nodejs
+  - numpy
+  - pandas
   - pip
   - pytest
   - python=3.7
