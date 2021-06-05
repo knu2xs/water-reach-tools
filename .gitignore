@@ -86,3 +86,20 @@ models/
 # ignore the caches created for ArcMap
 arcgis/Index
 arcgis/ImportLog
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+
+# IDE settings
+.vscode/
+
+# pycharm
+.idea/
+
+# dotenv
+.env
+
+# dask stuff
+**/dask-worker-space/*
