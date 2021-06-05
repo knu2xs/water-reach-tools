@@ -23,6 +23,7 @@ dependencies:
     - azure-storage-blob
     - boto3
     - bump2version
+    - html2text
     - ipykernel
     - placekey
     - sphinx

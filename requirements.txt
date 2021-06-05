@@ -1,5 +1,4 @@
 arcgis==1.8.0
-bokeh >= 0.13.0
 dask>=2.20.0
 dask[bag]>=2.20.0
 dask[distributed]>=2.20.0
@@ -12,4 +11,3 @@ scipy>=1.5.1
 shapely>=1.7.0
 swifter>=0.305
 tqdm>=4.47.0
-toolz>=0.10.0

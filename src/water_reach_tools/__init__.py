@@ -6,3 +6,5 @@ __version__ = '0.1.0'
 
 from .epa_waters import WATERS
 from .water_reach_tools import Reach
+
+__all__ = ['WATERS', 'Reach']

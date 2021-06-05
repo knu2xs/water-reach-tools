@@ -6,14 +6,15 @@ channels:
 
 dependencies:
   - esri::arcgis
-  - cookiecutter
-  - jupyterlab
+  - dask
   - nodejs
   - pip
   - pyarrow
   - python=3.7
   - python-dotenv
   - shapely
+  - swifter
   - pip:
     - azure-storage-blob
     - boto3
+    - html2text
