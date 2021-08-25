@@ -526,7 +526,7 @@ class Reach(object):
         # if there is not an abstract, create one from the description
         if (not self.abstract or len(self.abstract) == 0) and (self.description and len(self.description) > 0):
 
-            # reomve all line returns, html tags, trim to 500 characters, and trim to last space to ensure full word
+            # remove all line returns, html tags, trim to 500 characters, and trim to last space to ensure full word
             self.abstract = self._cleanup_string(_strip_tags(reach_info['description']))
             self.abstract = self.abstract.replace('\\', '').replace('/n', '')[:500]
             self.abstract = self.abstract[:self.abstract.rfind(' ')]
@@ -1010,7 +1010,7 @@ class Reach(object):
         access.set_type('intermediate')
         self.access_list.append(access)
 
-    def snap_putin_and_takeout_and_trace(self, webmap=False, gis=None):
+    def get_hydroline(self, webmap=False, gis=None):
         """
         Update the putin and takeout coordinates, and trace the hydroline
         using the EPA's WATERS services.
@@ -1092,8 +1092,9 @@ class Reach(object):
                 # do a little voodoo to get a feature set containing just the put-in
                 pts_df = self.reach_points_as_dataframe
                 putin_fs = pts_df[
-                    (pts_df['point_type'] == 'access') & (pts_df['subtype'] == 'putin')
-                    ].spatial.to_featureset()
+                    (pts_df['point_type'] == 'access')
+                    & (pts_df['subtype'] == 'putin')
+                ].spatial.to_featureset()
 
                 # use the feature set to get a response from the watershed function using Esri's Hydrology service
                 wtrshd_resp = hydrology.watershed(
@@ -1527,6 +1528,7 @@ class ReachPointFeatureLayer(_ReachIdFeatureLayer):
         if type(reach) != Reach:
             raise Exception('Reach to add must be a Reach object instance.')
 
+        # TODO: Ensure reach does not already exist
         return self.edit_features(adds=reach.reach_points_as_features)
 
     def _add_reach_point(self, reach_point):

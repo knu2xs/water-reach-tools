@@ -5,8 +5,8 @@ channels:
   - conda-forge
 
 dependencies:
-  - esri::arcgis
-  - esri::arcpy
+  - arcgis
+  - arcpy
   - dask
   - jupyterlab
   - nodejs
@@ -16,7 +16,7 @@ dependencies:
   - pytest
   - python=3.7
   - python-dotenv
-  - esri::pyarrow
+  - pyarrow
   - pyyaml
   - seaborn
   - shapely

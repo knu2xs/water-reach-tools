@@ -92,7 +92,7 @@ def test_takeout():
 
 def test_trace_result():
     reach = Reach.get_from_aw(reach_id_lws)
-    reach.snap_putin_and_takeout_and_trace()
+    reach.get_hydroline()
     assert isinstance(reach.geometry, Polyline)
 
 
