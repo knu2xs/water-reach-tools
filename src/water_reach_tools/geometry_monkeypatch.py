@@ -1,7 +1,10 @@
+import importlib
+
 from arcgis.features import GeoAccessor
 from arcgis.geometry import Geometry, Point, Polyline, find_transformation, project, SpatialReference
+import pandas as pd
 from shapely import ops
-import importlib
+
 
 # check what packages are available
 HASARCPY = True if importlib.util.find_spec("arcpy") else False

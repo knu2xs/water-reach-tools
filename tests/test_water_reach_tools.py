@@ -74,35 +74,32 @@ def test_download_raw_json_from_aw():
 
 
 def test_get_from_aw():
-    reach = Reach.get_from_aw(reach_id_lws)
+    reach = Reach.from_aw(reach_id_lws)
     assert reach.river_name == 'Little White Salmon'
 
 
 def test_putin():
-    reach = Reach.get_from_aw(reach_id_lws)
+    reach = Reach.from_aw(reach_id_lws)
     putin = reach.putin
     assert (putin_x_lws, putin_y_lws) == (putin.geometry.x, putin.geometry.y)
 
 
 def test_takeout():
-    reach = Reach.get_from_aw(reach_id_lws)
+    reach = Reach.from_aw(reach_id_lws)
     takeout = reach.takeout
     assert (takeout_x_lws, takeout_y_lws) == (takeout.geometry.x, takeout.geometry.y)
 
 
 def test_trace_result():
-    reach = Reach.get_from_aw(reach_id_lws)
+    reach = Reach.from_aw(reach_id_lws)
     reach.get_hydroline()
     assert isinstance(reach.geometry, Polyline)
 
 
-# Guage testing on French Broad Section Nine
+# Gauge testing on French Broad Section Nine
 reach_id_fb9 = 1074
 
 
 def test_get_ranges():
-    reach = Reach.get_from_aw(reach_id_fb9)
+    reach = Reach.from_aw(reach_id_fb9)
     assert reach.gauge_runnable is not None
-
-def test_update_stage(reach_point_lyr):
-    pass

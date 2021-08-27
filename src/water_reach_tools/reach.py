@@ -14,31 +14,28 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+from __future__ import annotations
 from copy import deepcopy
 import datetime
 from html.parser import HTMLParser
 import inspect
 import json
-import os
 import re
+from typing import List, Tuple, Union
 from uuid import uuid4
 
 from arcgis.env import active_gis
-from arcgis.gis import GIS, Item
-from arcgis.features import Feature, FeatureLayer, hydrology
-from arcgis.geometry import Polygon, Polyline, Geometry
+from arcgis.gis import GIS
+from arcgis.features import Feature, hydrology
+from arcgis.geometry import Polygon
 from html2text import html2text
 import numpy as np
-import pandas as pd
 import requests
 from scipy.interpolate import splprep, splev
 
-try:
-    from .epa_waters import WATERS
-    from .geometry_monkeypatch import *
-except:
-    from water_reach_tools.epa_waters import WATERS
-    from water_reach_tools.geometry_monkeypatch import *
+from .epa_waters import WATERS
+from .geometry_monkeypatch import *
+from .feature_layers import ReachPointFeatureLayer, ReachLineFeatureLayer
 
 
 # helper for cleaning up HTML strings
@@ -175,24 +172,28 @@ class ReachPoint(object):
     Discrete object facilitating working with reach points.
     """
 
-    def __init__(self, reach_id, geometry, point_type, uid=None, subtype=None, name=None, side_of_river=None,
-                 collection_method=None, update_date=None, notes=None, description=None, difficulty=None, **kwargs):
+    def __init__(self, reach_id: str, geometry: Point, point_type: str, uid: str = None, subtype: str = None,
+                 name: str = None, side_of_river: str = None, collection_method: str = None,
+                 update_date: datetime = None, notes: str = None, description: str = None,
+                 difficulty: str = None, **kwargs):
+
+        self.nhdplus_measure = None
+        self.nhdplus_reach_id = None
+
+        self._side_of_river = None
+        self._geom = None
 
         self.reach_id = str(reach_id)
+        self.geometry = geometry
         self.point_type = point_type
         self.subtype = subtype
         self.name = name
-        self.nhdplus_measure = None
-        self.nhdplus_reach_id = None
+        self.side_of_river = side_of_river  # left or right
         self.collection_method = collection_method
         self.update_date = update_date
         self.notes = notes
         self.description = description
         self.difficulty = difficulty
-        self._geometry = None
-
-        self.set_geometry(geometry)
-        self.set_side_of_river(side_of_river)  # left or right
 
         if uid is None:
             self.uid = uuid4().hex
@@ -208,44 +209,61 @@ class ReachPoint(object):
         return '_'.join(id_list)
 
     @property
-    def geometry(self):
+    def point(self) -> Point:
         """
-        Geometry for the access, a point.
-        :return: Point Geometry object
-            Point where access is located.
+        Point Geometry
         """
-        return self._geometry
+        return self.geometry
 
-    def set_geometry(self, geometry):
+    @point.setter
+    def point(self, geometry: Point):
+        self.geometry = geometry
+
+    @property
+    def geometry(self) -> Point:
+        """
+        Geometry, a point.
+        """
+        return self._geom
+
+    @geometry.setter
+    def geometry(self, geometry: Point) -> None:
         """
         Set the geometry for the access.
         :param geometry: Point Geometry Object
-        :return: Boolean True if successful
         """
         if geometry.type != 'Point':
-            raise Exception('access geometry must be a valid ArcGIS Point Geometry object')
+            raise Exception('geometry must be a valid ArcGIS Point Geometry object')
         else:
-            self._geometry = geometry
-            return True
+            self._geom = geometry
 
-    def set_side_of_river(self, side_of_river):
+    @property
+    def side_of_river(self) -> str:
         """
-        Set the side of the river the access is located on.
-        :param side_of_river:
-        :return:
+        Which side of the river the point is located on (if applicable).
         """
+        return self._side_of_river
+
+    @side_of_river.setter
+    def side_of_river(self, side_of_river: str) -> None:
         if side_of_river is not None and side_of_river != 'left' and side_of_river != 'right':
             raise Exception('side of river must be either "left" or "right"')
         else:
-            self.side_of_river = side_of_river
+            self._side_of_river = side_of_river
 
-    def snap_to_nhdplus(self):
+    def snap_to_nhdplus(self) -> bool:
         """
         Snap the access geometry to the nearest NHD Plus hydroline, and get the measure and NHD Plus Reach ID
             needed to perform traces against the EPA WATERS Upstream/Downstream service.
         :return: Boolean True when complete
         """
+        # status flag
+        waters_snap = False
+
+        # if a geometry is populated
         if self.geometry:
+
+            # snap the point using the waters service
             waters = WATERS()
             epa_point = waters.get_epa_snap_point(self.geometry.x, self.geometry.y)
 
@@ -253,29 +271,27 @@ class ReachPoint(object):
             if epa_point:
 
                 # set properties accordingly
-                self.set_geometry(epa_point['geometry'])
+                self.geometry = epa_point['geometry']
                 self.nhdplus_measure = epa_point['measure']
                 self.nhdplus_reach_id = epa_point['id']
-                return True
+                waters_snap = True
 
-            # if a point was not located, return false
-            else:
-                return False
+        return waters_snap
 
     @property
-    def as_feature(self):
+    def as_feature(self) -> Feature:
         """
         Get the access as an ArcGIS Python API Feature object.
         :return: ArcGIS Python API Feature object representing the access.
         """
         return Feature(
-            geometry=self._geometry,
+            geometry=self._geom,
             attributes={key: vars(self)[key] for key in vars(self).keys()
                         if key != '_geometry' and not key.startswith('_')}
         )
 
     @property
-    def as_dictionary(self):
+    def as_dictionary(self) -> dict:
         """
         Get the point as a dictionary of values making it easier to build DataFrames.
         :return: Dictionary of all properties, with a little modification for geometries.
@@ -350,7 +366,7 @@ class Reach(object):
                 attempts = attempts + 1
         raise Exception('cannot download data for reach_id {}'.format(self['reach_id']))
 
-    def _parse_difficulty_string(self, difficulty_combined):
+    def _parse_difficulty_string(self, difficulty_combined:str) -> None:
         match = re.match(
             '^([I|IV|V|VI|5\.\d]{1,3}(?=-))?-?([I|IV|V|VI|5\.\d]{1,3}[+|-]?)\(?([I|IV|V|VI|5\.\d]{0,3}[+|-]?)',
             difficulty_combined
@@ -360,21 +376,21 @@ class Reach(object):
         self.difficulty_outlier = self._get_if_length(match.group(3))
 
     @staticmethod
-    def _get_if_length(match_string):
+    def _get_if_length(match_string: str) -> Union[str, None]:
         if match_string and len(match_string):
             return match_string
         else:
             return None
 
-    def _validate_aw_json(self, json_block, key):
+    def _validate_aw_json(self, json_block: dict, key: str) -> str:
 
         # check to ensure a value exists
         if key not in json_block.keys():
-            return None
+            resp = None
 
         # ensure there is a value for the key
         elif json_block[key] is None:
-            return None
+            resp = None
 
         else:
 
@@ -383,22 +399,24 @@ class Reach(object):
 
             # now, ensure something is still there...not kidding, this frequently is the case...it is all gone
             if not value:
-                return None
+                resp = None
             elif not len(value):
-                return None
+                resp = None
 
             else:
                 # now check to ensure there is actually some text in the block, not just blank characters
                 if not (re.match(r'^([ \r\n\t])+$', value) or not (value != 'N/A')):
 
                     # if everything is good, return a value
-                    return value
+                    resp = value
 
                 else:
-                    return None
+                    resp = None
+
+        return resp
 
     @staticmethod
-    def _cleanup_string(input_string):
+    def _cleanup_string(input_string: str) -> str:
 
         # ensure something to work with
         if not input_string:
@@ -427,7 +445,7 @@ class Reach(object):
         # finally call it good
         return cleanup
 
-    def _parse_aw_json(self, raw_json):
+    def _parse_aw_json(self, raw_json: str) -> None:
 
         def remove_backslashes(input_str):
             if isinstance(input_str, str) and len(input_str):
@@ -540,23 +558,23 @@ class Reach(object):
             self._zoom_envelope = Geometry({"rings": [envlp_coords], "spatialReference": {"wkid": 4326}})
 
     @property
-    def putin_x(self):
+    def putin_x(self) -> float:
         return self.putin.geometry.x
 
     @property
-    def putin_y(self):
+    def putin_y(self) -> float:
         return self.putin.geometry.y
 
     @property
-    def takeout_x(self):
+    def takeout_x(self) -> float:
         return self.takeout.geometry.x
 
     @property
-    def takeout_y(self):
+    def takeout_y(self) -> float:
         return self.takeout.geometry.y
 
     @property
-    def difficulty_filter(self):
+    def difficulty_filter(self) -> float:
         lookup_dict = {
             'I':    1.1,
             'I+':   1.2,
@@ -576,7 +594,7 @@ class Reach(object):
         return lookup_dict[self.difficulty_maximum]
 
     @property
-    def reach_points_as_features(self):
+    def reach_points_as_features(self) -> List[Feature]:
         """
         Get all the reach points as a list of features.
         :return: List of ArcGIS Python API Feature objects.
@@ -584,7 +602,7 @@ class Reach(object):
         return [pt.as_feature for pt in self._reach_points]
 
     @property
-    def reach_points_as_dataframe(self):
+    def reach_points_as_dataframe(self) -> pd.DataFrame:
         """
         Get the reach points as an Esri Spatially Enabled Pandas DataFrame.
         :return:
@@ -594,7 +612,7 @@ class Reach(object):
         return df_pt
 
     @property
-    def centroid(self):
+    def centroid(self) -> Point:
         """
         Get a point geometry centroid for the hydroline.
 
@@ -603,7 +621,7 @@ class Reach(object):
         """
         # if the hydroline is defined, use the centroid of the hydroline
         if isinstance(self.geometry, Polyline):
-            return Geometry({
+            pt = Geometry({
                 'x': np.mean([self.putin.geometry.x, self.takeout.geometry.x]),
                 'y': np.mean([self.putin.geometry.y, self.takeout.geometry.y]),
                 'spatialReference': self.putin.geometry.spatial_reference
@@ -613,7 +631,7 @@ class Reach(object):
         elif isinstance(self.putin, ReachPoint) and isinstance(self.takeout, ReachPoint):
 
             # create a point geometry using the average coordinates
-            return Geometry({
+            pt = Geometry({
                 'x': np.mean([self.putin.geometry.x, self.takeout.geometry.x]),
                 'y': np.mean([self.putin.geometry.y, self.takeout.geometry.y]),
                 'spatialReference': self.putin.geometry.spatial_reference
@@ -621,75 +639,80 @@ class Reach(object):
 
         # if only the putin is defined, use that
         elif isinstance(self.putin, ReachPoint):
-            return self.putin.geometry
+            pt = self.putin.geometry
 
         # and if on the takeout is defined, likely the person digitizing was taking too many hits from the bong
         elif isinstance(self.takeout, ReachPoint):
-            return self.takeout.geometry
+            pt = self.takeout.geometry
 
         else:
-            return None
+            pt = None
+
+        return pt
 
     @property
-    def extent(self):
+    def extent(self) -> Tuple[float]:
         """
         Provide the extent of the reach as (xmin, ymin, xmax, ymax)
-        :return: Set (xmin, ymin, xmax, ymax)
+        :return: Tuple (xmin, ymin, xmax, ymax)
         """
-        return (
+        ext = (
             min(self.putin.geometry.x, self.takeout.geometry.x),
             min(self.putin.geometry.y, self.takeout.geometry.y),
             max(self.putin.geometry.x, self.takeout.geometry.x),
             max(self.putin.geometry.y, self.takeout.geometry.y),
         )
+        return ext
 
     @property
-    def reach_search(self):
+    def reach_search_string(self) -> str:
         if len(self.river_name) and len(self.reach_name):
-            return f'{self.river_name} {self.reach_name}'
+            ret_str = f'{self.river_name} {self.reach_name}'
         elif len(self.river_name) and not len(self.reach_name):
-            return self.river_name
+            ret_str = self.river_name
         elif len(self.reach_name) and not len(self.river_name):
-            return self.reach_name
+            ret_str = self.reach_name
         else:
-            return ''
+            ret_str = ''
+        return ret_str
 
     @property
-    def has_a_point(self):
+    def has_point(self) -> bool:
         if self.putin is None and self.takeout is None:
-            return False
-
+            has_pt = False
         elif self.putin.geometry.type == 'Point' or self.putin.geometry == 'Point':
-            return True
-
+            has_pt = True
         else:
-            return False
+            has_pt = False
+
+        return has_pt
 
     @property
     def gauge_min(self):
         gauge_min_lst = [self.gauge_r0, self.gauge_r1, self.gauge_r2, self.gauge_r3, self.gauge_r4, self.gauge_r5]
         gauge_min_lst = [val for val in gauge_min_lst if val is not None]
-        if len(gauge_min_lst):
-            return min(gauge_min_lst)
-        else:
-            return None
+
+        g_min = min(gauge_min_lst) if len(gauge_min_lst) else None
+
+        return g_min
 
     @property
     def gauge_max(self):
         gauge_max_lst = [self.gauge_r4, self.gauge_r5, self.gauge_r6, self.gauge_r7, self.gauge_r8, self.gauge_r9]
         gauge_max_lst = [val for val in gauge_max_lst if val is not None]
-        if len(gauge_max_lst):
-            return max(gauge_max_lst)
-        else:
-            return None
+
+        g_max = max(gauge_max_lst) if len(gauge_max_lst) else None
+
+        return g_max
 
     @property
     def gauge_runnable(self):
-        if (self.gauge_min and self.gauge_max and self.gauge_observation) and \
-                (self.gauge_min < self.gauge_observation < self.gauge_max):
-            return True
-        else:
-            return False
+        has_all = self.gauge_min and self.gauge_max and self.gauge_observation
+        is_between = self.gauge_min < self.gauge_observation < self.gauge_max
+
+        runnable = has_all and is_between
+
+        return runnable
 
     @property
     def gauge_stage(self):
@@ -867,7 +890,7 @@ class Reach(object):
                 return 'extremely high'
 
     @classmethod
-    def get_from_aw(cls, reach_id):
+    def from_aw(cls, reach_id: str) -> Reach:
 
         # create instance of reach
         reach = cls(reach_id)
@@ -886,7 +909,8 @@ class Reach(object):
         return reach
 
     @classmethod
-    def get_from_arcgis(cls, reach_id, reach_point_layer, reach_centroid_layer, reach_line_layer):
+    def from_arcgis(cls, reach_id, reach_point_layer: ReachPointFeatureLayer, reach_centroid_layer,
+                    reach_line_layer: ReachLineFeatureLayer) -> cls:
 
         # create instance of reach
         reach = cls(reach_id)
@@ -940,16 +964,18 @@ class Reach(object):
         # return the reach object
         return reach
 
-    def _get_accesses_by_type(self, access_type):
+    def _get_access_list_by_type(self, access_type: str) -> List[ReachPoint]:
 
         # check to ensure the correct access type is being specified
-        if access_type != 'putin' and access_type != 'takeout' and access_type != 'intermediate':
-            raise Exception('access type must be either "putin", "takeout" or "intermediate"')
+        valid_typ = access_type == 'putin' or access_type == 'takeout' or access_type == 'intermediate'
+        assert valid_typ, 'access type must be either "putin", "takeout" or "intermediate"'
 
         # return list of all accesses of specified type
-        return [pt for pt in self._reach_points if pt.subtype == access_type and pt.point_type == 'access']
+        access_lst = [pt for pt in self._reach_points if pt.subtype == access_type and pt.point_type == 'access']
 
-    def _set_putin_takeout(self, access, access_type):
+        return access_lst
+
+    def _set_putin_takeout(self, access: ReachPoint, access_type: str) -> ReachPoint:
         """
         Set the putin or takeout using a ReachPoint object.
         :param access: ReachPoint - Required
@@ -959,12 +985,10 @@ class Reach(object):
         :return:
         """
         # enforce correct object type
-        if type(access) != ReachPoint:
-            raise Exception('{} access must be an instance of ReachPoint object type'.format(access_type))
+        assert type(access) != ReachPoint, f'{access_type} access must be an instance of ReachPoint object type'
 
         # check to ensure the correct access type is being specified
-        if access_type != 'putin' and access_type != 'takeout':
-            raise Exception('access type must be either "putin" or "takeout"')
+        assert  access_type != 'putin' and access_type != 'takeout', 'access type must be either "putin" or "takeout"'
 
         # update the list to NOT include the point we are adding
         self._reach_points = [pt for pt in self._reach_points if pt.subtype != access_type]
@@ -977,45 +1001,48 @@ class Reach(object):
         self._reach_points.append(access)
 
     @property
-    def putin(self):
-        access_df = self._get_accesses_by_type('putin')
+    def putin(self) -> ReachPoint:
+        access_df = self._get_access_list_by_type('putin')
         if len(access_df) > 0:
-            return access_df[0]
+            pi = access_df[0]
         else:
-            return None
+            pi = None
+        return pi
 
-    def set_putin(self, access):
+    @putin.setter
+    def putin(self, access: ReachPoint) -> None:
         self._set_putin_takeout(access, 'putin')
 
     @property
-    def takeout(self):
-        access_lst = self._get_accesses_by_type('takeout')
+    def takeout(self) -> ReachPoint:
+        access_lst = self._get_access_list_by_type('takeout')
         if len(access_lst) > 0:
-            return access_lst[0]
+            to = access_lst[0]
         else:
-            return None
+            to = None
+        return to
 
-    def set_takeout(self, access):
+    @takeout.setter
+    def takeout(self, access: ReachPoint) -> None:
         self._set_putin_takeout(access, 'takeout')
 
     @property
-    def intermediate_accesses(self):
-        access_df = self._get_accesses_by_type('intermediate')
+    def intermediate_access_list(self) -> List[ReachPoint]:
+        access_df = self._get_access_list_by_type('intermediate')
         if len(access_df) > 0:
             return access_df
         else:
-            return None
+            return []
 
-    def add_intermediate_access(self, access):
+    def add_intermediate_access(self, access: ReachPoint) -> ReachPoint:
         access.set_type('intermediate')
         self.access_list.append(access)
+        return access
 
-    def get_hydroline(self, webmap=False, gis=None):
+    def get_hydroline(self, gis=None):
         """
         Update the putin and takeout coordinates, and trace the hydroline
         using the EPA's WATERS services.
-        :param webmap: Boolean - Optional
-            Return a web map widget if successful - useful for visualizing single reach.
         :param gis: Active GIS for performing hydrology analysis.
         :return:
         """
@@ -1064,7 +1091,7 @@ class Reach(object):
                         takeout_geom = takeout_geom.snap_to_line(trace_polyline)
 
                         # update the takeout to the snapped point
-                        self.takeout.set_geometry(takeout_geom)
+                        self.takeout.geometry = takeout_geom
 
                         # now dial in the coordinates using the EPA service - getting the rest of the attributes
                         self.takeout.snap_to_nhdplus()
@@ -1110,7 +1137,7 @@ class Reach(object):
                     putin = self.putin
                     putin_geometry = wtrshd_resp.snapped_points.features[0].geometry
                     putin_geometry['spatialReference'] = wtrshd_resp.snapped_points.spatial_reference
-                    putin.set_geometry(Geometry(putin_geometry))
+                    putin.geometry = Geometry(putin_geometry)
                     self.set_putin(putin)
 
                 # if a putin was not found, quit swimming in the ocean
@@ -1146,7 +1173,7 @@ class Reach(object):
 
                     # snap the takeout to the traced line
                     takeout_geom = self.takeout.geometry.snap_to_line(trace_geom)
-                    self.takeout.set_geometry(takeout_geom)
+                    self.takeout.geometry = takeout_geom
 
                     # trim the reach line to the takeout
                     line_geom = trace_geom.trim_at_point(self.takeout.geometry)
@@ -1171,21 +1198,25 @@ class Reach(object):
                 self.notes = "The reach could not be trace with neither the EPA's WATERS service nor the Esri " \
                              "Hydrology services."
 
-        # if map result desired, return it
-        if webmap:
-            return self.plot_map()
-        else:
-            return trace_status
+        return trace_status
 
     @property
-    def geometry(self):
+    def geometry(self) -> Polyline:
         """
         Return the reach polyline geometry.
         :return: Polyline Geometry
         """
         return self._geometry
 
-    def _get_feature_attributes(self):
+    @property
+    def hydroline(self) -> Polyline:
+        """
+        Return the reach hydroline geometry.
+        :return: Polyline Geometry object delineating the hydroline.
+        """
+        return self._geometry
+
+    def _get_feature_attributes(self) -> dict:
         """helper function for exporting features"""
         srs = pd.Series(dir(self))
         srs = srs[
@@ -1202,7 +1233,7 @@ class Reach(object):
         return {key: getattr(self, key) for key in srs}
 
     @property
-    def as_feature(self):
+    def as_feature(self) -> Feature:
         """
         Get the reach as an ArcGIS Python API Feature object.
         :return: ArcGIS Python API Feature object representing the reach.
@@ -1214,7 +1245,7 @@ class Reach(object):
         return feat
 
     @property
-    def as_centroid_feature(self):
+    def as_centroid_feature(self) -> Feature:
         """
         Get a feature with the centroid geometry.
         :return: Feature with point geometry for the reach centroid.
@@ -1222,7 +1253,7 @@ class Reach(object):
         return Feature(geometry=self.centroid, attributes=self._get_feature_attributes())
 
     @property
-    def as_zoom_envelope_feature(self):
+    def as_zoom_envelope_feature(self) -> Feature:
         """
         Get a polygon geometry object with a generally accurate zoom envelope.
         :return: Polygon feature complete with attributes.
@@ -1393,248 +1424,3 @@ class Reach(object):
             )
 
         return webmap
-
-
-class _ReachIdFeatureLayer(FeatureLayer):
-
-    @classmethod
-    def from_item_id(cls, gis, item_id):
-        url = Item(gis, item_id).layers[0].url
-        return cls(url, gis)
-
-    @classmethod
-    def from_url(cls, gis, url):
-        return cls(url, gis)
-
-    def query_by_reach_id(self, reach_id, spatial_reference={'wkid': 4326}):
-        return self.query(f"reach_id = '{reach_id}'", out_sr=spatial_reference)
-
-    def flush(self):
-        """
-        Delete all data!
-        :return: Response
-        """
-        # get a list of all OID's
-        oid_list = self.query(return_ids_only=True)['objectIds']
-
-        # if there are features
-        if len(oid_list):
-            # convert the list to a comma separated string
-            oid_deletes = ','.join([str(v) for v in oid_list])
-
-            # delete all the features using the OID string
-            return self.edit_features(deletes=oid_deletes)
-
-    def update(self, reach):
-
-        # get oid of records matching reach_id
-        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
-
-        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
-        if len(oid_lst) > 0:
-
-            # check the geometry type of the target feature service - point or line
-            if self.properties.geometryType == 'esriGeometryPoint':
-                update_feat = reach.as_centroid_feature
-
-            elif self.properties.geometryType == 'esriGeometryPolyline':
-                update_feat = reach.as_feature
-
-            update_feat.attributes['OBJECTID'] = oid_lst[0]
-            resp = self.edit_features(updates=[update_feat])
-
-        # if the feature does not exist, add it
-        else:
-            resp = self.add_reach(reach)
-
-        return resp
-
-    def update_attributes_only(self, reach):
-
-        # get oid of records matching reach_id
-        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
-
-        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
-        if len(oid_lst) > 0:
-
-            # check the geometry type of the target feature service - point or line
-            if self.properties.geometryType == 'esriGeometryPoint':
-                update_feat = reach.as_centroid_feature
-
-            elif self.properties.geometryType == 'esriGeometryPolyline':
-                update_feat = reach.as_feature
-
-            # remove any of the geographic properties from the feature
-            for attr in ['extent']:
-                del (update_feat.attributes[attr])
-            update_feat = Feature(attributes=update_feat.attributes)  # gets rid of geometry
-
-            update_feat.attributes['OBJECTID'] = oid_lst[0]
-
-            # push the update
-            resp = self.edit_features(updates=[update_feat])
-
-            return resp
-
-        else:
-
-            return False
-
-    def update_stage(self, reach):
-
-        # get oid of records matching reach_id
-        oid_lst = self.query(f"reach_id = '{reach.reach_id}'", return_ids_only=True)['objectIds']
-
-        # if a feature already exists - hopefully the case, get the oid, add it to the feature, and push it
-        if len(oid_lst) > 0:
-
-            # check the geometry type of the target feature service - point or line
-            if self.properties.geometryType == 'esriGeometryPoint':
-                update_feat = reach.as_centroid_feature
-
-            elif self.properties.geometryType == 'esriGeometryPolyline':
-                update_feat = reach.as_feature
-
-            # remove properties not needed, which is most of them
-            update_keys = ['gauge_runnable', 'gauge_stage', 'gauge_observation']
-            attrs = {k: update_feat.attributes[k] for k in update_feat.attributes.keys() if k in update_keys}
-
-            # create new feature without geometry and only needed attributes
-            update_feat = Feature(attributes=attrs)
-
-            # tack on the object id retrieved initally
-            update_feat.attributes['OBJECTID'] = oid_lst[0]
-
-            # push the update
-            resp = self.edit_features(updates=[update_feat])
-
-            return resp
-
-        else:
-
-            return False
-
-
-class ReachPointFeatureLayer(_ReachIdFeatureLayer):
-
-    def add_reach(self, reach):
-        """
-        Push new reach points to the reach point feature service in bulk.
-        :param reach: Reach - Required
-            Reach object being pushed to feature service.
-        :return: Dictionary response from edit features method.
-        """
-        # check for correct object type
-        if type(reach) != Reach:
-            raise Exception('Reach to add must be a Reach object instance.')
-
-        # TODO: Ensure reach does not already exist
-        return self.edit_features(adds=reach.reach_points_as_features)
-
-    def _add_reach_point(self, reach_point):
-        # add a new reach point to ArcGIS Online
-        resp = self.update(adds=[reach_point.as_feature])
-
-        # TODO: handle the response
-        return None
-
-    def update_putin_or_takeout(self, access):
-        access_resp = self.query(
-            f"reach_id = '{access.reach_id}' AND point_type = 'access' AND subtype = '{access.subtype}'",
-            return_ids_only=True)['objectIds']
-        if len(access_resp):
-            oid_access = access_resp[0]
-            access_feature = access.as_feature
-            access_feature.attributes['OBJECTID'] = oid_access
-            return self.edit_features(updates=[access_feature])
-        else:
-            return self.edit_features(adds=[access.as_feature])
-
-    def update_putin(self, access):
-        if not access.subtype == 'putin':
-            raise Exception('A put-in access point must be provided to update the put-in.')
-        return self.update_putin_or_takeout(access)
-
-    def update_takeout(self, access):
-        if not access.subtype == 'takeout':
-            raise Exception('A take-out access point must be provided to update the take-out.')
-        return self.update_putin_or_takeout(access)
-
-    def _create_reach_point_from_series(self, reach_point):
-
-        # create an access object instance with the required parameters
-        access = ReachPoint(reach_point['reach_id'], reach_point['_geometry'], reach_point['type'])
-
-        # for the remainder of the fields from the service, populate if matching key in access object
-        for key in [val for val in reach_point.keys() if val not in ['reach_id', '_geometry', 'type']]:
-            if key in access.keys():
-                access[key] = reach_point[key]
-
-        return access
-
-    def get_putin(self, reach_id):
-
-        # get a pandas series from the feature service representing the putin access
-        sdf = self.get_putin_sdf(reach_id)
-        putin_series = sdf.iloc[0]
-        return self._create_reach_point_from_series(putin_series)
-
-    def get_takeout(self, reach_id):
-
-        # get a pandas series from the feature service representing the putin access
-        sdf = self.get_takeout_sdf(reach_id)
-        takeout_series = sdf.iloc[0]
-        return self._create_reach_point_from_series(takeout_series)
-
-
-class ReachLineFeatureLayer(_ReachIdFeatureLayer):
-
-    def query_by_river_name(self, river_name_search):
-        field_name = 'name_river'
-        where_list = ["{} LIKE '%{}%'".format(field_name, name_part) for name_part in river_name_search.split()]
-        where_clause = ' AND '.join(where_list)
-        return self.query(where_clause).df
-
-    def query_by_section_name(self, section_name_search):
-        field_name = 'name_section'
-        where_list = ["{} LIKE '%{}%'".format(field_name, name_part) for name_part in section_name_search.split()]
-        where_clause = ' AND '.join(where_list)
-        return self.query(where_clause).df
-
-    def add_reach(self, reach):
-        """
-        Push reach to feature service.
-        :param reach: Reach - Required
-            Reach object being pushed to feature service.
-        :return: Dictionary response from edit features method.
-        """
-
-        # check for correct object type
-        if type(reach) != Reach:
-            raise Exception('Reach to add must be a Reach object instance.')
-
-        # check the geometry type of the target feature service - point or line
-        if self.properties.geometryType == 'esriGeometryPoint':
-            point_feature = reach.as_centroid_feature
-            resp = self.edit_features(adds=[point_feature])
-
-        elif self.properties.geometryType == 'esriGeometryPolyline':
-            line_feature = reach.as_feature
-            resp = self.edit_features(adds=[line_feature])
-
-        else:
-            raise Exception('The feature service geometry type must be either point or polyline.')
-
-        return resp
-
-
-def update_stage(reach_id, line_lyr_id=os.getenv('REACH_LINE_ID'), centroid_lyr_id=os.getenv('REACH_CENTROID_ID')):
-    """
-    Update the reach stage by the id.
-    :param reach_id: Reach ID uniquely identifying the reach
-    :return: Boolean success or failure.
-    """
-    reach = Reach.get_from_aw(reach_id)
-    for lyr_id in [line_lyr_id, centroid_lyr_id]:
-        lyr = ReachFeatureLayer.from_item_id(lyr_id)
-        lyr.update_reach_attributes_only(reach)

@@ -5,7 +5,7 @@ channels:
   - conda-forge
 
 dependencies:
-  - esri::arcgis
+  - arcgis
   - cookiecutter
   - dask
   - fiona
@@ -15,17 +15,14 @@ dependencies:
   - numpy
   - pandas
   - pip
-  - esri::pyarrow
+  - pyarrow
   - pytest
   - python=3.7
   - python-dotenv
-  - pyyaml
-  - seaborn
+  - scipy
   - shapely
   - swifter
   - pip:
-    - azure-storage-blob
-    - boto3
     - bump2version
     - html2text
     - ipykernel

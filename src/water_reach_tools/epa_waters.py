@@ -1,3 +1,8 @@
+from arcgis.geometry import Geometry, Polyline
+import requests
+import shapely
+
+
 class WATERS(object):
 
     @staticmethod
@@ -180,7 +185,7 @@ class WATERS(object):
 
         # if no geometry is found, puke
         else:
-            raise TraceException('the tracing operation did not find any hydrolines')
+            raise Exception('the tracing operation did not find any hydrolines')
 
     @staticmethod
     def _epa_updown_response_to_esri_polyline(updown_response):
@@ -208,7 +213,7 @@ class WATERS(object):
 
         # if no geometry is found, puke
         else:
-            raise TraceException('the tracing operation did not find any hydrolines')
+            raise Exception('the tracing operation did not find any hydrolines')
 
     def get_downstream_navigation_polyline(self, putin_epa_reach_id, putin_epa_measure):
         """
